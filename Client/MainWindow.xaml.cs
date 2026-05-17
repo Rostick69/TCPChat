@@ -50,10 +50,12 @@ namespace Client
             SetConnected(true);
         }
 
-        // Кнопка Отключиться
+        // Кнопка Отключиться — отключаемся и очищаем список пользователей
         private void BtnDisconnect_Click(object sender, RoutedEventArgs e)
         {
             _client?.Disconnect();
+            lstUsers.Items.Clear();
+            lstChat.Items.Add($"[{DateTime.Now:HH:mm}] *** Отключено ***");
             SetConnected(false);
         }
 
