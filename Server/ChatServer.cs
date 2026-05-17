@@ -10,15 +10,28 @@ namespace Server
 {
     public class ChatServer
     {
+        // Событие — отправляет строку лога в интерфейс сервера
         public event Action<string> OnLog;
+
+        // Событие — отправляет количество клиентов в интерфейс
         public event Action<int> OnCountChanged;
 
+        // Порт на котором слушает сервер
         private readonly int _port;
+
+        // TCP слушатель — ожидает входящие подключения
         private TcpListener _listener;
+
+        // Флаг работы сервера
         private bool _running;
+
+        // Словарь: никнейм → StreamWriter для отправки сообщений клиенту
         private readonly Dictionary<string, StreamWriter> _clients = new();
+
+        // Объект синхронизации — защищает словарь от одновременного доступа из разных потоков
         private readonly object _lock = new object();
 
+        // Количество подключённых клиентов
         public int Count => _clients.Count;
 
         public ChatServer(int port)
@@ -26,6 +39,7 @@ namespace Server
             _port = port;
         }
 
+        // Запуск сервера — начинаем слушать порт и принимать клиентов
         public void Start()
         {
             _running = true;
@@ -33,11 +47,15 @@ namespace Server
             _listener.Start();
             Log($"Сервер запущен на порту {_port}");
 
+            // Бесконечный цикл приёма новых подключений
             while (_running)
             {
                 try
                 {
+                    // Ждём нового клиента — блокирует поток до подключения
                     var client = _listener.AcceptTcpClient();
+
+                    // Каждый клиент обслуживается в отдельном фоновом потоке
                     var t = new Thread(() => Handle(client)) { IsBackground = true };
                     t.Start();
                 }
@@ -45,6 +63,7 @@ namespace Server
             }
         }
 
+        // Остановка сервера
         public void Stop()
         {
             _running = false;
@@ -52,6 +71,7 @@ namespace Server
             Log("Сервер остановлен");
         }
 
+        // Обработчик одного клиентского соединения — выполняется в отдельном потоке
         private void Handle(TcpClient tcp)
         {
             string nick = null;
@@ -63,12 +83,15 @@ namespace Server
                 var reader = new StreamReader(stream);
                 writer = new StreamWriter(stream) { AutoFlush = true };
 
+                // Первое сообщение — команда /join с никнеймом
                 string first = reader.ReadLine();
                 if (first == null || !first.StartsWith("/join ")) return;
 
                 nick = first.Substring(6).Trim();
                 if (string.IsNullOrEmpty(nick)) return;
 
+                // Добавляем клиента в словарь под защитой lock
+                // Проверяем что никнейм не занят
                 lock (_lock)
                 {
                     if (_clients.ContainsKey(nick))
@@ -81,20 +104,28 @@ namespace Server
 
                 Log($"[+] {nick}");
                 OnCountChanged?.Invoke(Count);
+
+                // Уведомляем всех о новом участнике
                 Broadcast($"SYS:{nick} вошёл в чат", null);
+
+                // Отправляем новому клиенту список пользователей онлайн
                 SendUsers(nick);
 
+                // Основной цикл чтения сообщений от клиента
                 string line;
                 while ((line = reader.ReadLine()) != null)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     Log($"{nick}: {line}");
+
+                    // Рассылаем сообщение всем клиентам
                     Broadcast($"MSG:{nick}:{line}", null);
                 }
             }
             catch { }
             finally
             {
+                // Клиент отключился — убираем из словаря и уведомляем остальных
                 if (nick != null)
                 {
                     lock (_lock) _clients.Remove(nick);
@@ -106,6 +137,8 @@ namespace Server
             }
         }
 
+        // Рассылка сообщения всем клиентам кроме указанного
+        // Если клиент недоступен — удаляем его из словаря
         private void Broadcast(string msg, string skip)
         {
             lock (_lock)
@@ -117,10 +150,13 @@ namespace Server
                     try { kv.Value.WriteLine(msg); }
                     catch { dead.Add(kv.Key); }
                 }
+
+                // Удаляем отключившихся клиентов
                 foreach (var k in dead) _clients.Remove(k);
             }
         }
 
+        // Отправка списка пользователей онлайн конкретному клиенту
         private void SendUsers(string to)
         {
             string list;
@@ -132,6 +168,7 @@ namespace Server
             }
         }
 
+        // Запись в лог с временной меткой
         private void Log(string msg) =>
             OnLog?.Invoke($"[{DateTime.Now:HH:mm:ss}] {msg}");
     }

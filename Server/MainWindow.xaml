@@ -1,23 +1,60 @@
 ﻿<Window x:Class="Server.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Сервер" Height="480" Width="680"
+        Title="TCP Чат — Сервер" Height="500" Width="620"
+        Background="#1e1e2e"
         Closing="Window_Closing">
-    <Grid Margin="10">
+
+    <Grid Margin="15">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-            <Label Content="Порт:"/>
-            <TextBox x:Name="txtPort" Text="5000" Width="80"/>
-            <Button Content="Запустить" Width="100" Margin="10,0,5,0" Click="BtnStart_Click" x:Name="btnStart"/>
-            <Button Content="Остановить" Width="100" Click="BtnStop_Click" IsEnabled="False" x:Name="btnStop"/>
-            <Label Content="  Онлайн: "/>
-            <Label x:Name="lblCount" Content="0" FontWeight="Bold" Foreground="Blue"/>
+        <!-- Заголовок -->
+        <TextBlock Grid.Row="0" Text="TCP Чат — Сервер"
+                   FontSize="20" FontWeight="Bold"
+                   Foreground="#cdd6f4" Margin="0,0,0,15"/>
+
+        <!-- Панель управления -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBlock Text="Порт:" Foreground="#cdd6f4"
+                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="txtPort" Text="5000" Width="80"
+                     Background="#313244" Foreground="#cdd6f4"
+                     BorderBrush="#585b70" Padding="5,3"/>
+            <Button x:Name="btnStart" Content="Запустить"
+                    Margin="10,0,5,0" Padding="15,5"
+                    Background="#a6e3a1" Foreground="#1e1e2e"
+                    FontWeight="Bold" BorderThickness="0"
+                    Click="BtnStart_Click"/>
+            <Button x:Name="btnStop" Content="Остановить"
+                    Padding="15,5" IsEnabled="False"
+                    Background="#f38ba8" Foreground="#1e1e2e"
+                    FontWeight="Bold" BorderThickness="0"
+                    Click="BtnStop_Click"/>
+            <TextBlock Text="  Онлайн: " Foreground="#cdd6f4"
+                       VerticalAlignment="Center"/>
+            <Label x:Name="lblCount" Content="0"
+                   Foreground="#a6e3a1" FontWeight="Bold"
+                   VerticalAlignment="Center" Padding="0"/>
         </StackPanel>
 
-        <ListBox x:Name="lstLog" Grid.Row="1" FontFamily="Consolas" FontSize="12"/>
+        <!-- Лог событий -->
+        <Border Grid.Row="2" Background="#313244"
+                BorderBrush="#585b70" BorderThickness="1" CornerRadius="8">
+            <ListBox x:Name="lstLog"
+                     Background="Transparent" BorderThickness="0"
+                     Foreground="#cdd6f4" Padding="8"
+                     FontFamily="Consolas" FontSize="12"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+        </Border>
+
+        <!-- Статус -->
+        <TextBlock Grid.Row="3" Text="Сервер готов к запуску"
+                   Foreground="#585b70" Margin="0,8,0,0"
+                   FontSize="11"/>
     </Grid>
 </Window>
