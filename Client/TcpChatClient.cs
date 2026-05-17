@@ -28,6 +28,8 @@ namespace Client
 
         // Флаг активного соединения
         private bool _connected;
+        // Свойство для проверки состояния подключения из интерфейса
+        public bool IsConnected => _connected;
 
         // Подключение к серверу по адресу, порту и никнейму
         public void Connect(string host, int port, string nick)
