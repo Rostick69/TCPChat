@@ -68,6 +68,8 @@ namespace Server
         {
             _running = false;
             _listener?.Stop();
+            // Очищаем список клиентов при остановке сервера
+            lock (_lock) _clients.Clear();
             Log("Сервер остановлен");
         }
 
