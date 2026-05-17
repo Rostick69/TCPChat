@@ -1,40 +1,99 @@
 ﻿<Window x:Class="Client.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Клиент" Height="560" Width="780"
+        Title="TCP Чат — Клиент" Height="560" Width="780"
+        Background="#1e1e2e"
         Closing="Window_Closing">
-    <Grid Margin="10">
+
+    <Grid Margin="15">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <StackPanel Orientation="Horizontal">
-            <TextBox x:Name="txtIp" Text="127.0.0.1" Width="110" Margin="0,0,6,0"/>
-            <TextBox x:Name="txtPort" Text="5000" Width="60" Margin="0,0,6,0"/>
-            <TextBox x:Name="txtNick" Width="110" Margin="0,0,10,0"/>
-            <Button x:Name="btnConnect" Content="Подключиться" Width="110" Click="BtnConnect_Click"/>
-            <Button x:Name="btnDisconnect" Content="Отключиться" Width="110" Margin="6,0,0,0" Click="BtnDisconnect_Click" IsEnabled="False"/>
+        <!-- Заголовок -->
+        <TextBlock Grid.Row="0" Text="TCP Чат — Клиент"
+                   FontSize="20" FontWeight="Bold"
+                   Foreground="#cdd6f4" Margin="0,0,0,15"/>
+
+        <!-- Панель подключения -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+            <TextBlock Text="IP:" Foreground="#cdd6f4"
+                       VerticalAlignment="Center" Margin="0,0,5,0"/>
+            <TextBox x:Name="txtIp" Text="127.0.0.1" Width="110"
+                     Background="#313244" Foreground="#cdd6f4"
+                     BorderBrush="#585b70" Padding="5,3"/>
+            <TextBlock Text="Порт:" Foreground="#cdd6f4"
+                       VerticalAlignment="Center" Margin="8,0,5,0"/>
+            <TextBox x:Name="txtPort" Text="5000" Width="60"
+                     Background="#313244" Foreground="#cdd6f4"
+                     BorderBrush="#585b70" Padding="5,3"/>
+            <TextBlock Text="Никнейм:" Foreground="#cdd6f4"
+                       VerticalAlignment="Center" Margin="8,0,5,0"/>
+            <TextBox x:Name="txtNick" Width="110"
+                     Background="#313244" Foreground="#cdd6f4"
+                     BorderBrush="#585b70" Padding="5,3"/>
+            <Button x:Name="btnConnect" Content="Подключиться"
+                    Margin="10,0,5,0" Padding="15,5"
+                    Background="#a6e3a1" Foreground="#1e1e2e"
+                    FontWeight="Bold" BorderThickness="0"
+                    Click="BtnConnect_Click"/>
+            <Button x:Name="btnDisconnect" Content="Отключиться"
+                    Padding="15,5" IsEnabled="False"
+                    Background="#f38ba8" Foreground="#1e1e2e"
+                    FontWeight="Bold" BorderThickness="0"
+                    Click="BtnDisconnect_Click"/>
         </StackPanel>
 
-        <Grid Grid.Row="1" Margin="0,8,0,0">
+        <!-- Основная область -->
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="3*"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="160"/>
             </Grid.ColumnDefinitions>
-            <ListBox x:Name="lstChat" Margin="0,0,6,0"/>
-            <ListBox x:Name="lstUsers" Grid.Column="1"/>
+
+            <!-- Лента сообщений -->
+            <Border Grid.Column="0" Background="#313244"
+                    BorderBrush="#585b70" BorderThickness="1"
+                    CornerRadius="8" Margin="0,0,8,0">
+                <ListBox x:Name="lstChat"
+                         Background="Transparent" BorderThickness="0"
+                         Foreground="#cdd6f4" Padding="8"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+            </Border>
+
+            <!-- Список пользователей онлайн -->
+            <Border Grid.Column="1" Background="#313244"
+                    BorderBrush="#585b70" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                    <TextBlock Text="Онлайн" Foreground="#a6e3a1"
+                               FontWeight="Bold" Margin="8,8,8,4"/>
+                    <ListBox x:Name="lstUsers"
+                             Background="Transparent" BorderThickness="0"
+                             Foreground="#cdd6f4" Padding="4"/>
+                </StackPanel>
+            </Border>
         </Grid>
 
-        <Grid Grid.Row="2" Margin="0,8,0,0">
+        <!-- Поле ввода -->
+        <Grid Grid.Row="3" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition/>
+                <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBox x:Name="txtMsg" Height="36" IsEnabled="False" KeyDown="TxtMsg_KeyDown"/>
-            <Button Content="Отправить" Grid.Column="1" Width="100" Margin="6,0,0,0"
-                    x:Name="btnSend" IsEnabled="False" Click="BtnSend_Click"/>
+            <TextBox x:Name="txtMsg" Grid.Column="0"
+                     Background="#313244" Foreground="#cdd6f4"
+                     BorderBrush="#585b70" Padding="8,6"
+                     IsEnabled="False"
+                     KeyDown="TxtMsg_KeyDown"/>
+            <Button x:Name="btnSend" Grid.Column="1"
+                    Content="Отправить" Margin="8,0,0,0"
+                    Padding="20,6" IsEnabled="False"
+                    Background="#89b4fa" Foreground="#1e1e2e"
+                    FontWeight="Bold" BorderThickness="0"
+                    Click="BtnSend_Click"/>
         </Grid>
     </Grid>
 </Window>
