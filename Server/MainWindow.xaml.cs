@@ -38,6 +38,8 @@ namespace Server
 
             btnStart.IsEnabled = false;
             btnStop.IsEnabled = true;
+            // Очищаем лог при новом запуске
+            lstLog.Items.Clear();
         }
 
         // Кнопка Остановить — останавливаем сервер
