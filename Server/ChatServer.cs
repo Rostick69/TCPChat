@@ -33,6 +33,8 @@ namespace Server
 
         // Количество подключённых клиентов
         public int Count => _clients.Count;
+        // Список никнеймов подключённых клиентов
+        public List<string> GetUsers() => new List<string>(_clients.Keys);
 
         public ChatServer(int port)
         {
