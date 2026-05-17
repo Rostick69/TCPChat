@@ -66,9 +66,10 @@ namespace Client
             t.Start();
         }
 
-        // Отправка сообщения на сервер
+        // Отправка сообщения на сервер с проверкой подключения
         public void Send(string text)
         {
+            if (!_connected) return;
             try { _writer?.WriteLine(text); }
             catch { }
         }
