@@ -32,14 +32,23 @@
 
 ## Структура проекта
 TCPChat/
+
 ├── Server/
+
 │   ├── ChatServer.cs        — логика сервера: TcpListener, потоки, события
+
 │   ├── MainWindow.xaml      — интерфейс сервера
+
 │   └── MainWindow.xaml.cs   — подписка на события, обновление UI
+
 │
+
 ├── Client/
+
 │   ├── TcpChatClient.cs     — логика клиента: TcpClient, поток чтения, события
+
 │   ├── MainWindow.xaml      — интерфейс клиента
+
 │   └── MainWindow.xaml.cs   — подписка на события, обновление UI
 
 ## Технологии
