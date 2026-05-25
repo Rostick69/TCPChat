@@ -101,6 +101,7 @@ namespace Server
                     if (_clients.ContainsKey(nick))
                     {
                         writer.WriteLine("SYS:Ник занят");
+                        nick = null; // чтобы в finally не вызвался блок отключения
                         return;
                     }
                     _clients[nick] = writer;
@@ -112,8 +113,8 @@ namespace Server
                 // Уведомляем всех о новом участнике
                 Broadcast($"SYS:{nick} вошёл в чат", null);
 
-                // Отправляем новому клиенту список пользователей онлайн
-                SendUsers(nick);
+                // Рассылаем обновлённый список пользователей онлайн ВСЕМ клиентам
+                BroadcastUsers();
 
                 // Основной цикл чтения сообщений от клиента
                 string line;
@@ -136,6 +137,8 @@ namespace Server
                     Log($"[-] {nick}");
                     OnCountChanged?.Invoke(Count);
                     Broadcast($"SYS:{nick} покинул чат", null);
+                    // Рассылаем обновлённый список пользователей после отключения
+                    BroadcastUsers();
                 }
                 tcp.Close();
             }
@@ -170,6 +173,16 @@ namespace Server
                 if (_clients.TryGetValue(to, out var w))
                     try { w.WriteLine(list); } catch { }
             }
+        }
+
+        // Рассылка обновлённого списка пользователей онлайн ВСЕМ клиентам
+        // Вызывается при подключении нового участника и при отключении любого участника,
+        // чтобы у всех клиентов в реальном времени отображался актуальный список онлайн
+        private void BroadcastUsers()
+        {
+            string list;
+            lock (_lock) list = "USERS:" + string.Join(",", _clients.Keys);
+            Broadcast(list, null);
         }
 
         // Запись в лог с временной меткой
