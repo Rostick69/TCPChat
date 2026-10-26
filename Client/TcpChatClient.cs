@@ -1,4 +1,4 @@
-﻿#nullable disable
+#nullable disable
 using System;
 using System.IO;
 using System.Net.Sockets;
@@ -6,77 +6,104 @@ using System.Threading;
 
 namespace Client
 {
+    // Сетевая часть клиента: подключение, поток чтения, разбор протокола и события для интерфейса
     public class TcpChatClient
     {
-        // Событие — срабатывает при получении обычного сообщения (отправитель, текст)
+        // Обычное сообщение в общий чат (отправитель, текст)
         public event Action<string, string> OnMessage;
-
-        // Событие — срабатывает при получении системного сообщения
+        // Личное сообщение: входящее (от кого, текст)
+        public event Action<string, string> OnPrivateMessage;
+        // Личное сообщение: подтверждение отправки (кому, текст)
+        public event Action<string, string> OnPrivateSent;
+        // Системное сообщение (вход/выход участников и т. п.)
         public event Action<string> OnSystem;
-
-        // Событие — срабатывает при получении списка пользователей онлайн
+        // Ошибка от сервера (например, ник занят)
+        public event Action<string> OnError;
+        // Список пользователей онлайн
         public event Action<string[]> OnUsers;
-
-        // Событие — срабатывает при потере соединения с сервером
+        // Потеря соединения с сервером
         public event Action OnDisconnected;
 
-        // TCP клиент — соединение с сервером
         private TcpClient _tcp;
-
-        // Поток записи — отправка сообщений серверу
         private StreamWriter _writer;
+        private volatile bool _connected;
 
-        // Флаг активного соединения
-        private bool _connected;
-        // Свойство для проверки состояния подключения из интерфейса
         public bool IsConnected => _connected;
 
-        // Подключение к серверу по адресу, порту и никнейму
+        // Подключение к серверу. Если сервер недоступен — бросает исключение,
+        // которое обрабатывается в интерфейсе
         public void Connect(string host, int port, string nick)
         {
             _tcp = new TcpClient();
-            _tcp.Connect(host, port);
+
+            // Ждём подключения не дольше 5 секунд, чтобы интерфейс не зависал надолго
+            var connectTask = _tcp.ConnectAsync(host, port);
+            bool completed;
+            try
+            {
+                completed = connectTask.Wait(5000);
+            }
+            catch (AggregateException ae)
+            {
+                _tcp.Close();
+                throw ae.GetBaseException(); // например, SocketException «подключение не установлено»
+            }
+            if (!completed)
+            {
+                _tcp.Close();
+                throw new TimeoutException("Сервер не ответил за 5 секунд");
+            }
 
             var stream = _tcp.GetStream();
             _writer = new StreamWriter(stream) { AutoFlush = true };
             var reader = new StreamReader(stream);
-
             _connected = true;
 
-            // Отправляем никнейм серверу командой /join
+            // Первая команда протокола — /join с никнеймом
             _writer.WriteLine($"/join {nick}");
 
-            // Запускаем фоновый поток чтения входящих сообщений
-            var t = new Thread(() =>
-            {
-                try
-                {
-                    string line;
-
-                    // Читаем строки пока соединение активно
-                    while (_connected && (line = reader.ReadLine()) != null)
-                        Parse(line);
-                }
-                catch { }
-                finally
-                {
-                    // Соединение разорвано — уведомляем интерфейс
-                    if (_connected) { _connected = false; OnDisconnected?.Invoke(); }
-                }
-            })
-            { IsBackground = true };
+            // Фоновый поток постоянно читает строки от сервера
+            var t = new Thread(() => ReadLoop(reader)) { IsBackground = true, Name = "ReadLoop" };
             t.Start();
         }
 
-        // Отправка сообщения на сервер с проверкой подключения
-        public void Send(string text)
+        private void ReadLoop(StreamReader reader)
         {
-            if (!_connected) return;
-            try { _writer?.WriteLine(text); }
-            catch { }
+            try
+            {
+                string line;
+                while (_connected && (line = reader.ReadLine()) != null)
+                    Parse(line);
+            }
+            catch (IOException) { }
+            catch (ObjectDisposedException) { }
+            finally
+            {
+                // Если отключение произошло не по кнопке — сообщаем интерфейсу
+                if (_connected)
+                {
+                    _connected = false;
+                    OnDisconnected?.Invoke();
+                }
+            }
         }
 
-        // Отключение от сервера
+        // Отправка строки на сервер (обычное сообщение или команда)
+        public bool Send(string text)
+        {
+            if (!_connected) return false;
+            try
+            {
+                _writer.WriteLine(text);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+        }
+
+        // Отключение по кнопке
         public void Disconnect()
         {
             _connected = false;
@@ -86,22 +113,38 @@ namespace Client
         // Разбор входящей строки по префиксу протокола
         private void Parse(string line)
         {
-            // Системное сообщение: SYS:текст
-            if (line.StartsWith("SYS:"))
-                OnSystem?.Invoke(line.Substring(4));
-
-            // Список пользователей: USERS:ник1,ник2,ник3
-            else if (line.StartsWith("USERS:"))
-                OnUsers?.Invoke(line.Substring(6).Split(',', StringSplitOptions.RemoveEmptyEntries));
-
-            // Обычное сообщение: MSG:ник:текст
-            else if (line.StartsWith("MSG:"))
+            if (line.StartsWith("MSG:"))
             {
-                var parts = line.Substring(4).Split(':', 2);
+                // MSG:ник:текст (текст может содержать двоеточия, поэтому делим только на 2 части)
+                var parts = line.Substring(4).Split(new[] { ':' }, 2);
                 if (parts.Length == 2) OnMessage?.Invoke(parts[0], parts[1]);
             }
+            else if (line.StartsWith("PM:"))
+            {
+                var parts = line.Substring(3).Split(new[] { ':' }, 2);
+                if (parts.Length == 2) OnPrivateMessage?.Invoke(parts[0], parts[1]);
+            }
+            else if (line.StartsWith("PMTO:"))
+            {
+                var parts = line.Substring(5).Split(new[] { ':' }, 2);
+                if (parts.Length == 2) OnPrivateSent?.Invoke(parts[0], parts[1]);
+            }
+            else if (line.StartsWith("USERS:"))
+            {
+                OnUsers?.Invoke(line.Substring(6).Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries));
+            }
+            else if (line.StartsWith("SYS:"))
+            {
+                OnSystem?.Invoke(line.Substring(4));
+            }
+            else if (line.StartsWith("ERR:"))
+            {
+                OnError?.Invoke(line.Substring(4));
+            }
             else
+            {
                 OnSystem?.Invoke(line);
+            }
         }
     }
 }

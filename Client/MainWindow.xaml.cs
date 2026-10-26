@@ -1,65 +1,95 @@
-﻿#nullable disable
+#nullable disable
 using System;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 
 namespace Client
 {
     public partial class MainWindow : Window
     {
-        // Экземпляр клиента
         private TcpChatClient _client;
+
+        // Цвета строк ленты
+        private static readonly Brush NormalBrush = new SolidColorBrush(Color.FromRgb(0xcd, 0xd6, 0xf4));
+        private static readonly Brush SystemBrush = new SolidColorBrush(Color.FromRgb(0xa6, 0xad, 0xc8));
+        private static readonly Brush PrivateBrush = new SolidColorBrush(Color.FromRgb(0xf9, 0xe2, 0xaf));
+        private static readonly Brush ErrorBrush = new SolidColorBrush(Color.FromRgb(0xf3, 0x8b, 0xa8));
 
         public MainWindow()
         {
             InitializeComponent();
         }
 
-        // Кнопка Подключиться — создаём клиент и подключаемся к серверу
+        // Кнопка «Подключиться»
         private void BtnConnect_Click(object sender, RoutedEventArgs e)
         {
-            if (!int.TryParse(txtPort.Text, out int port)) return;
+            if (!int.TryParse(txtPort.Text, out int port) || port < 1 || port > 65535)
+            {
+                MessageBox.Show("Введите корректный порт", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             string nick = txtNick.Text.Trim();
-            if (string.IsNullOrEmpty(nick)) return;
+            if (string.IsNullOrEmpty(nick))
+            {
+                MessageBox.Show("Введите никнейм", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
 
             _client = new TcpChatClient();
 
-            // Подписываемся на обычные сообщения — добавляем в ленту
-            _client.OnMessage += (from, text) => Dispatcher.Invoke(() =>
-                AddLine($"{from}: {text}", false));
-
-            // Подписываемся на системные сообщения — добавляем в ленту
-            _client.OnSystem += msg => Dispatcher.Invoke(() =>
-                AddLine($"*** {msg} ***", true));
-
-            // Подписываемся на список пользователей — обновляем панель онлайн
+            // Подписка на события клиента. Они вызываются из фонового потока чтения,
+            // поэтому элементы интерфейса меняем только через Dispatcher.Invoke
+            _client.OnMessage += (from, text) => Dispatcher.Invoke(() => AddLine($"{from}: {text}", NormalBrush));
+            _client.OnPrivateMessage += (from, text) => Dispatcher.Invoke(() => AddLine($"[ЛС от {from}] {text}", PrivateBrush));
+            _client.OnPrivateSent += (to, text) => Dispatcher.Invoke(() => AddLine($"[ЛС для {to}] {text}", PrivateBrush));
+            _client.OnSystem += msg => Dispatcher.Invoke(() => AddLine($"*** {msg} ***", SystemBrush));
+            _client.OnError += msg => Dispatcher.Invoke(() =>
+            {
+                AddLine($"Ошибка: {msg}", ErrorBrush);
+                MessageBox.Show(msg, "Сервер отклонил подключение", MessageBoxButton.OK, MessageBoxImage.Warning);
+            });
             _client.OnUsers += users => Dispatcher.Invoke(() =>
             {
                 lstUsers.Items.Clear();
                 foreach (var u in users) lstUsers.Items.Add(u);
             });
-
-            // Подписываемся на отключение — уведомляем пользователя
             _client.OnDisconnected += () => Dispatcher.Invoke(() =>
             {
-                AddLine("*** Соединение потеряно ***", true);
+                AddLine("*** Соединение с сервером потеряно ***", ErrorBrush);
+                lstUsers.Items.Clear();
                 SetConnected(false);
             });
 
-            _client.Connect(txtIp.Text.Trim(), port, nick);
+            try
+            {
+                _client.Connect(txtIp.Text.Trim(), port, nick);
+            }
+            catch (Exception ex)
+            {
+                // Сервер не запущен, неверный адрес или таймаут — программа не падает, а сообщает об ошибке
+                AddLine($"Не удалось подключиться: {ex.Message}", ErrorBrush);
+                MessageBox.Show($"Не удалось подключиться к серверу:\n{ex.Message}", "Ошибка подключения",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                _client = null;
+                return;
+            }
+
+            Title = $"TCP Чат — Клиент ({nick})";
             SetConnected(true);
+            txtMsg.Focus();
         }
 
-        // Кнопка Отключиться — отключаемся и очищаем список пользователей
+        // Кнопка «Отключиться»
         private void BtnDisconnect_Click(object sender, RoutedEventArgs e)
         {
             _client?.Disconnect();
             lstUsers.Items.Clear();
-            lstChat.Items.Add($"[{DateTime.Now:HH:mm}] *** Отключено ***");
+            AddLine("*** Вы отключились ***", SystemBrush);
             SetConnected(false);
         }
 
-        // Кнопка Отправить
         private void BtnSend_Click(object sender, RoutedEventArgs e) => Send();
 
         // Отправка по клавише Enter
@@ -68,33 +98,53 @@ namespace Client
             if (e.Key == Key.Enter) Send();
         }
 
-        // Отправка сообщения на сервер
+        // Двойной щелчок по пользователю — подставляем команду личного сообщения
+        private void LstUsers_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (lstUsers.SelectedItem is string user && txtMsg.IsEnabled)
+            {
+                txtMsg.Text = $"/pm {user} ";
+                txtMsg.CaretIndex = txtMsg.Text.Length;
+                txtMsg.Focus();
+            }
+        }
+
         private void Send()
         {
             string text = txtMsg.Text.Trim();
-            if (string.IsNullOrEmpty(text)) return;
-            _client?.Send(text);
+            if (string.IsNullOrEmpty(text)) return; // пустые сообщения не отправляем
+            if (_client == null || !_client.Send(text))
+            {
+                AddLine("Сообщение не отправлено: нет соединения", ErrorBrush);
+                return;
+            }
             txtMsg.Clear();
         }
 
-        // Добавление строки в ленту сообщений с временной меткой
-        private void AddLine(string text, bool system)
+        // Добавление строки в ленту с временем и цветом
+        private void AddLine(string text, Brush color)
         {
-            string time = DateTime.Now.ToString("HH:mm");
-            lstChat.Items.Add($"[{time}] {text}");
-            lstChat.ScrollIntoView(lstChat.Items[lstChat.Items.Count - 1]);
+            var item = new ListBoxItem
+            {
+                Content = new TextBlock { Text = $"[{DateTime.Now:HH:mm}] {text}", TextWrapping = TextWrapping.Wrap },
+                Foreground = color
+            };
+            lstChat.Items.Add(item);
+            lstChat.ScrollIntoView(item);
         }
 
-        // Включение/выключение элементов интерфейса
         private void SetConnected(bool on)
         {
             btnConnect.IsEnabled = !on;
             btnDisconnect.IsEnabled = on;
             btnSend.IsEnabled = on;
             txtMsg.IsEnabled = on;
+            txtIp.IsEnabled = !on;
+            txtPort.IsEnabled = !on;
+            txtNick.IsEnabled = !on;
+            if (!on) Title = "TCP Чат — Клиент";
         }
 
-        // При закрытии окна отключаемся от сервера
         private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
             _client?.Disconnect();

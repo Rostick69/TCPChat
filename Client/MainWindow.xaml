@@ -72,7 +72,11 @@
                                FontWeight="Bold" Margin="8,8,8,4"/>
                     <ListBox x:Name="lstUsers"
                              Background="Transparent" BorderThickness="0"
-                             Foreground="#cdd6f4" Padding="4"/>
+                             Foreground="#cdd6f4" Padding="4"
+                             ToolTip="Двойной щелчок — личное сообщение"
+                             MouseDoubleClick="LstUsers_MouseDoubleClick"/>
+                    <TextBlock Text="Двойной щелчок по нику — личное сообщение"
+                               Foreground="#a6adc8" FontSize="10" TextWrapping="Wrap" Margin="8,4,8,8"/>
                 </StackPanel>
             </Border>
         </Grid>

@@ -6,6 +6,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Разрешает запуск на более новой версии .NET, если .NET 8 не установлен -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
 
 </Project>
