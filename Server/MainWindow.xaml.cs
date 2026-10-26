@@ -1,6 +1,6 @@
-﻿#nullable disable
+#nullable disable
 using System;
-using System.Threading;
+using System.Net.Sockets;
 using System.Windows;
 
 namespace Server
@@ -15,39 +15,71 @@ namespace Server
             InitializeComponent();
         }
 
-        // Кнопка Запустить — создаём сервер и запускаем в отдельном потоке
+        // Кнопка «Запустить»: создаём сервер, подписываемся на события и запускаем
         private void BtnStart_Click(object sender, RoutedEventArgs e)
         {
-            if (!int.TryParse(txtPort.Text, out int port)) return;
+            if (!int.TryParse(txtPort.Text, out int port) || port < 1 || port > 65535)
+            {
+                MessageBox.Show("Введите корректный порт (1–65535)", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            lstLog.Items.Clear();
+            lstUsers.Items.Clear();
 
             _server = new ChatServer(port);
 
-            // Подписываемся на лог — добавляем запись в список через Dispatcher
-            _server.OnLog += msg => Dispatcher.Invoke(() =>
-            {
-                lstLog.Items.Add(msg);
-                lstLog.ScrollIntoView(lstLog.Items[lstLog.Items.Count - 1]);
-            });
-
-            // Подписываемся на изменение количества клиентов
+            // События приходят из фоновых потоков, поэтому UI обновляем только через Dispatcher.Invoke
+            _server.OnLog += msg => Dispatcher.Invoke(() => AddLog(msg));
             _server.OnCountChanged += count => Dispatcher.Invoke(() => lblCount.Content = count);
+            _server.OnClientConnected += nick => Dispatcher.Invoke(RefreshUsers);
+            _server.OnClientDisconnected += nick => Dispatcher.Invoke(RefreshUsers);
+            _server.OnMessageReceived += (from, text) =>
+                Dispatcher.Invoke(() => txtStatus.Text = $"Последнее сообщение: {from} в {DateTime.Now:HH:mm:ss}");
 
-            // Запускаем сервер в отдельном фоновом потоке чтобы не блокировать UI
-            var t = new Thread(_server.Start) { IsBackground = true };
-            t.Start();
+            try
+            {
+                _server.Start();
+            }
+            catch (SocketException ex)
+            {
+                // Например, порт уже занят другой программой
+                MessageBox.Show($"Не удалось запустить сервер: {ex.Message}", "Ошибка", MessageBoxButton.OK, MessageBoxImage.Error);
+                _server = null;
+                return;
+            }
 
             btnStart.IsEnabled = false;
             btnStop.IsEnabled = true;
-            // Очищаем лог при новом запуске
-            lstLog.Items.Clear();
+            txtPort.IsEnabled = false;
+            txtStatus.Text = $"Сервер работает на порту {port}";
         }
 
-        // Кнопка Остановить — останавливаем сервер
+        // Кнопка «Остановить»
         private void BtnStop_Click(object sender, RoutedEventArgs e)
         {
             _server?.Stop();
+            lstUsers.Items.Clear();
             btnStart.IsEnabled = true;
             btnStop.IsEnabled = false;
+            txtPort.IsEnabled = true;
+            txtStatus.Text = "Сервер остановлен";
+        }
+
+        // Добавление строки в лог с автопрокруткой
+        private void AddLog(string msg)
+        {
+            lstLog.Items.Add(msg);
+            lstLog.ScrollIntoView(lstLog.Items[lstLog.Items.Count - 1]);
+        }
+
+        // Обновление списка подключённых клиентов
+        private void RefreshUsers()
+        {
+            lstUsers.Items.Clear();
+            if (_server == null) return;
+            foreach (var u in _server.GetUsers())
+                lstUsers.Items.Add(u);
         }
 
         // При закрытии окна останавливаем сервер

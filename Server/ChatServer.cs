@@ -2,191 +2,311 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 
 namespace Server
 {
+    // Одно клиентское подключение: сокет и поток записи
+    public class ClientConnection
+    {
+        public TcpClient Tcp { get; set; }
+        public StreamWriter Writer { get; set; }
+    }
+
+    // Многопоточный TCP-сервер чата.
+    // Протокол (строки, заканчиваются \n):
+    //   клиент -> сервер:  /join ник | /users | /pm ник текст | обычный текст
+    //   сервер -> клиент:  MSG:ник:текст | SYS:текст | USERS:ник1,ник2 | PM:от:текст | PMTO:кому:текст | ERR:текст
     public class ChatServer
     {
-        // Событие — отправляет строку лога в интерфейс сервера
-        public event Action<string> OnLog;
+        // Обязательные события по заданию
+        public event Action<string> OnClientConnected;          // ник подключившегося
+        public event Action<string> OnClientDisconnected;       // ник отключившегося
+        public event Action<string, string> OnMessageReceived;  // отправитель, текст
 
-        // Событие — отправляет количество клиентов в интерфейс
-        public event Action<int> OnCountChanged;
+        // Дополнительные события для интерфейса сервера
+        public event Action<string> OnLog;       // строка лога
+        public event Action<int> OnCountChanged; // количество клиентов
 
-        // Порт на котором слушает сервер
+        // Ограничения протокола
+        public const int MaxNickLength = 20;
+        public const int MaxMessageLength = 1000;
+
         private readonly int _port;
-
-        // TCP слушатель — ожидает входящие подключения
         private TcpListener _listener;
+        private volatile bool _running;
 
-        // Флаг работы сервера
-        private bool _running;
-
-        // Словарь: никнейм → StreamWriter для отправки сообщений клиенту
-        private readonly Dictionary<string, StreamWriter> _clients = new();
-
-        // Объект синхронизации — защищает словарь от одновременного доступа из разных потоков
+        // Словарь «никнейм -> подключение», общий для всех потоков
+        private readonly Dictionary<string, ClientConnection> _clients = new Dictionary<string, ClientConnection>();
+        // Объект блокировки для синхронизации доступа к словарю
         private readonly object _lock = new object();
-
-        // Количество подключённых клиентов
-        public int Count => _clients.Count;
-        // Список никнеймов подключённых клиентов
-        public List<string> GetUsers() => new List<string>(_clients.Keys);
 
         public ChatServer(int port)
         {
             _port = port;
         }
 
-        // Запуск сервера — начинаем слушать порт и принимать клиентов
+        public bool IsRunning => _running;
+
+        // Количество подключённых клиентов (читаем под lock)
+        public int Count
+        {
+            get { lock (_lock) return _clients.Count; }
+        }
+
+        // Список никнеймов (копия, чтобы не держать lock снаружи)
+        public List<string> GetUsers()
+        {
+            lock (_lock) return _clients.Keys.OrderBy(k => k).ToList();
+        }
+
+        // Запуск сервера. Сам TcpListener запускается сразу (если порт занят — будет исключение),
+        // а цикл приёма подключений работает в отдельном фоновом потоке
         public void Start()
         {
-            _running = true;
             _listener = new TcpListener(IPAddress.Any, _port);
             _listener.Start();
-            Log($"Сервер запущен на порту {_port}");
+            _running = true;
+            Log("СТАРТ", $"Сервер запущен на порту {_port}");
 
-            // Бесконечный цикл приёма новых подключений
+            var acceptThread = new Thread(AcceptLoop) { IsBackground = true, Name = "AcceptLoop" };
+            acceptThread.Start();
+        }
+
+        // Цикл приёма подключений: на каждого клиента — отдельный поток
+        private void AcceptLoop()
+        {
             while (_running)
             {
                 try
                 {
-                    // Ждём нового клиента — блокирует поток до подключения
-                    var client = _listener.AcceptTcpClient();
-
-                    // Каждый клиент обслуживается в отдельном фоновом потоке
-                    var t = new Thread(() => Handle(client)) { IsBackground = true };
+                    TcpClient client = _listener.AcceptTcpClient();
+                    var t = new Thread(() => HandleClient(client)) { IsBackground = true };
                     t.Start();
                 }
-                catch { break; }
+                catch (SocketException)
+                {
+                    // Listener остановлен методом Stop() — выходим из цикла
+                    break;
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
             }
         }
 
-        // Остановка сервера
+        // Остановка сервера: закрываем listener и все клиентские соединения
         public void Stop()
         {
+            if (!_running) return;
             _running = false;
             _listener?.Stop();
-            // Очищаем список клиентов при остановке сервера
-            lock (_lock) _clients.Clear();
-            Log("Сервер остановлен");
+
+            List<ClientConnection> all;
+            lock (_lock)
+            {
+                all = _clients.Values.ToList();
+                _clients.Clear();
+            }
+            foreach (var c in all)
+            {
+                try { c.Writer.WriteLine("SYS:Сервер остановлен"); } catch { }
+                try { c.Tcp.Close(); } catch { }
+            }
+            OnCountChanged?.Invoke(0);
+            Log("СТОП", "Сервер остановлен");
         }
 
-        // Обработчик одного клиентского соединения — выполняется в отдельном потоке
-        private void Handle(TcpClient tcp)
+        // Обработчик одного клиента (выполняется в отдельном потоке)
+        private void HandleClient(TcpClient tcp)
         {
             string nick = null;
-            StreamWriter writer = null;
-
             try
             {
                 var stream = tcp.GetStream();
                 var reader = new StreamReader(stream);
-                writer = new StreamWriter(stream) { AutoFlush = true };
+                var writer = new StreamWriter(stream) { AutoFlush = true };
 
-                // Первое сообщение — команда /join с никнеймом
+                // Первая строка должна быть командой /join
                 string first = reader.ReadLine();
-                if (first == null || !first.StartsWith("/join ")) return;
-
-                nick = first.Substring(6).Trim();
-                if (string.IsNullOrEmpty(nick)) return;
-
-                // Добавляем клиента в словарь под защитой lock
-                // Проверяем что никнейм не занят
-                lock (_lock)
+                if (first == null || !first.StartsWith("/join "))
                 {
-                    if (_clients.ContainsKey(nick))
-                    {
-                        writer.WriteLine("SYS:Ник занят");
-                        nick = null; // чтобы в finally не вызвался блок отключения
-                        return;
-                    }
-                    _clients[nick] = writer;
+                    writer.WriteLine("ERR:Первой должна быть команда /join ник");
+                    return;
                 }
 
-                Log($"[+] {nick}");
+                string candidate = first.Substring(6).Trim();
+                string error = ValidateNick(candidate);
+                if (error != null)
+                {
+                    writer.WriteLine("ERR:" + error);
+                    return;
+                }
+
+                // Добавляем клиента в словарь под защитой lock
+                lock (_lock)
+                {
+                    if (_clients.ContainsKey(candidate))
+                    {
+                        writer.WriteLine("ERR:Ник занят, выберите другой");
+                        return;
+                    }
+                    _clients[candidate] = new ClientConnection { Tcp = tcp, Writer = writer };
+                }
+                nick = candidate;
+
+                Log("ВХОД", nick);
+                OnClientConnected?.Invoke(nick);
                 OnCountChanged?.Invoke(Count);
 
-                // Уведомляем всех о новом участнике
                 Broadcast($"SYS:{nick} вошёл в чат", null);
-
-                // Рассылаем обновлённый список пользователей онлайн ВСЕМ клиентам
                 BroadcastUsers();
 
-                // Основной цикл чтения сообщений от клиента
+                // Основной цикл чтения строк от клиента
                 string line;
                 while ((line = reader.ReadLine()) != null)
                 {
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-                    Log($"{nick}: {line}");
+                    if (string.IsNullOrWhiteSpace(line)) continue; // пустые строки игнорируем
 
-                    // Рассылаем сообщение всем клиентам
-                    Broadcast($"MSG:{nick}:{line}", null);
+                    if (line.StartsWith("/"))
+                        HandleCommand(nick, line);
+                    else
+                        HandleMessage(nick, line);
                 }
             }
-            catch { }
+            catch (IOException)
+            {
+                // Клиент оборвал соединение (закрыл программу без команды) — это нормальная ситуация
+            }
+            catch (ObjectDisposedException)
+            {
+            }
             finally
             {
-                // Клиент отключился — убираем из словаря и уведомляем остальных
                 if (nick != null)
                 {
-                    lock (_lock) _clients.Remove(nick);
-                    Log($"[-] {nick}");
-                    OnCountChanged?.Invoke(Count);
-                    Broadcast($"SYS:{nick} покинул чат", null);
-                    // Рассылаем обновлённый список пользователей после отключения
-                    BroadcastUsers();
+                    bool removed;
+                    lock (_lock) removed = _clients.Remove(nick);
+
+                    // Если сервер уже остановлен, словарь очищен в Stop() — повторно не уведомляем
+                    if (removed)
+                    {
+                        Log("ВЫХОД", nick);
+                        OnClientDisconnected?.Invoke(nick);
+                        OnCountChanged?.Invoke(Count);
+                        Broadcast($"SYS:{nick} покинул чат", null);
+                        BroadcastUsers();
+                    }
                 }
                 tcp.Close();
             }
         }
 
-        // Рассылка сообщения всем клиентам кроме указанного
-        // Если клиент недоступен — удаляем его из словаря
+        // Обычное сообщение — рассылаем всем
+        private void HandleMessage(string nick, string text)
+        {
+            if (text.Length > MaxMessageLength)
+                text = text.Substring(0, MaxMessageLength) + "…";
+
+            Log("СООБЩЕНИЕ", $"{nick}: {text}");
+            OnMessageReceived?.Invoke(nick, text);
+            Broadcast($"MSG:{nick}:{text}", null);
+        }
+
+        // Обработка команд, начинающихся с «/»
+        private void HandleCommand(string nick, string line)
+        {
+            if (line == "/users")
+            {
+                SendTo(nick, "USERS:" + string.Join(",", GetUsers()));
+                return;
+            }
+
+            if (line.StartsWith("/pm "))
+            {
+                // Формат: /pm ник текст
+                string rest = line.Substring(4).Trim();
+                int space = rest.IndexOf(' ');
+                if (space <= 0)
+                {
+                    SendTo(nick, "SYS:Формат личного сообщения: /pm ник текст");
+                    return;
+                }
+                string to = rest.Substring(0, space);
+                string text = rest.Substring(space + 1).Trim();
+                if (text.Length > MaxMessageLength)
+                    text = text.Substring(0, MaxMessageLength) + "…";
+
+                if (to == nick)
+                {
+                    SendTo(nick, "SYS:Нельзя отправить личное сообщение самому себе");
+                }
+                else if (SendTo(to, $"PM:{nick}:{text}"))
+                {
+                    SendTo(nick, $"PMTO:{to}:{text}");
+                    Log("ЛИЧНОЕ", $"{nick} -> {to}: {text}");
+                }
+                else
+                {
+                    SendTo(nick, $"SYS:Пользователь {to} не найден");
+                }
+                return;
+            }
+
+            SendTo(nick, "SYS:Неизвестная команда. Доступно: /users, /pm ник текст");
+        }
+
+        // Проверка никнейма: не пустой, без пробелов и служебных символов протокола
+        private static string ValidateNick(string nick)
+        {
+            if (string.IsNullOrWhiteSpace(nick)) return "Ник не может быть пустым";
+            if (nick.Length > MaxNickLength) return $"Ник длиннее {MaxNickLength} символов";
+            if (nick.IndexOfAny(new[] { ' ', ':', ',', '/' }) >= 0) return "Ник не должен содержать пробелы и символы : , /";
+            return null;
+        }
+
+        // Отправка строки одному клиенту. Возвращает false, если такого клиента нет
+        private bool SendTo(string nick, string msg)
+        {
+            lock (_lock)
+            {
+                if (!_clients.TryGetValue(nick, out var c)) return false;
+                try { c.Writer.WriteLine(msg); return true; }
+                catch { return false; }
+            }
+        }
+
+        // Рассылка всем клиентам (кроме skip). Весь перебор — под lock
         private void Broadcast(string msg, string skip)
         {
             lock (_lock)
             {
-                var dead = new List<string>();
                 foreach (var kv in _clients)
                 {
                     if (kv.Key == skip) continue;
-                    try { kv.Value.WriteLine(msg); }
-                    catch { dead.Add(kv.Key); }
+                    try { kv.Value.Writer.WriteLine(msg); }
+                    catch
+                    {
+                        // Ошибка записи значит, что клиент уже отключился.
+                        // Удалять его здесь не нужно: его поток HandleClient получит ошибку чтения
+                        // и сам корректно удалит клиента и уведомит остальных
+                    }
                 }
-
-                // Удаляем отключившихся клиентов
-                foreach (var k in dead) _clients.Remove(k);
             }
         }
 
-        // Отправка списка пользователей онлайн конкретному клиенту
-        private void SendUsers(string to)
-        {
-            string list;
-            lock (_lock) list = "USERS:" + string.Join(",", _clients.Keys);
-            lock (_lock)
-            {
-                if (_clients.TryGetValue(to, out var w))
-                    try { w.WriteLine(list); } catch { }
-            }
-        }
-
-        // Рассылка обновлённого списка пользователей онлайн ВСЕМ клиентам
-        // Вызывается при подключении нового участника и при отключении любого участника,
-        // чтобы у всех клиентов в реальном времени отображался актуальный список онлайн
+        // Рассылка актуального списка пользователей всем клиентам
         private void BroadcastUsers()
         {
-            string list;
-            lock (_lock) list = "USERS:" + string.Join(",", _clients.Keys);
-            Broadcast(list, null);
+            Broadcast("USERS:" + string.Join(",", GetUsers()), null);
         }
 
-        // Запись в лог с временной меткой
-        private void Log(string msg) =>
-            OnLog?.Invoke($"[{DateTime.Now:HH:mm:ss}] {msg}");
+        // Запись в лог: время, тип события, текст
+        private void Log(string type, string text) =>
+            OnLog?.Invoke($"[{DateTime.Now:HH:mm:ss}] {type,-10} {text}");
     }
 }
